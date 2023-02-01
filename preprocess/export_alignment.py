@@ -24,6 +24,49 @@ from utils import debug_utils, ray_utils
 from cameras import camera_pose
 from geometry.basics import Translation, Rotation
 from geometry import transformations
+import joblib
+
+def batch_rot2aa(Rs):
+    """
+    Rs is B x 3 x 3
+    void cMathUtil::RotMatToAxisAngle(const tMatrix& mat, tVector& out_axis,
+                                      double& out_theta)
+    {
+        double c = 0.5 * (mat(0, 0) + mat(1, 1) + mat(2, 2) - 1);
+        c = cMathUtil::Clamp(c, -1.0, 1.0);
+        out_theta = std::acos(c);
+        if (std::abs(out_theta) < 0.00001)
+        {
+            out_axis = tVector(0, 0, 1, 0);
+        }
+        else
+        {
+            double m21 = mat(2, 1) - mat(1, 2);
+            double m02 = mat(0, 2) - mat(2, 0);
+            double m10 = mat(1, 0) - mat(0, 1);
+            double denom = std::sqrt(m21 * m21 + m02 * m02 + m10 * m10);
+            out_axis[0] = m21 / denom;
+            out_axis[1] = m02 / denom;
+            out_axis[2] = m10 / denom;
+            out_axis[3] = 0;
+        }
+    }
+    """
+    cos = 0.5 * (torch.stack([torch.trace(x) for x in Rs]) - 1)
+    cos = torch.clamp(cos, -1, 1)
+
+    theta = torch.acos(cos)
+
+    m21 = Rs[:, 2, 1] - Rs[:, 1, 2]
+    m02 = Rs[:, 0, 2] - Rs[:, 2, 0]
+    m10 = Rs[:, 1, 0] - Rs[:, 0, 1]
+    denom = torch.sqrt(m21 * m21 + m02 * m02 + m10 * m10)
+
+    axis0 = torch.where(torch.abs(theta) < 0.00001, m21, m21 / denom)
+    axis1 = torch.where(torch.abs(theta) < 0.00001, m02, m02 / denom)
+    axis2 = torch.where(torch.abs(theta) < 0.00001, m10, m10 / denom)
+
+    return theta.unsqueeze(1) * torch.stack([axis0, axis1, axis2], 1)
 
 
 def read_vibe_estimates(vibe_output_path):
@@ -64,6 +107,36 @@ def dump_romp_estimates(romp_output_dir, dump_path, scene=None):
     joblib.dump(vibe_results, dump_path)
     print(f'dumped ROMP results to pkl at {dump_path}')
 
+def dump_pare_estimates(pare_output_dir, dump_path, scene=None):
+    # if os.path.isfile(dump_path):
+    #     return
+    vibe_estimates = {
+        'verts': [],
+        'joints3d': [],
+        'joints2d_img_coord': [],
+        'pose': [],
+        'betas': [],
+    }
+    for cur, dirs, files in os.walk(pare_output_dir):
+        for file in sorted(files):
+            cur_res = joblib.load(os.path.join(cur, file))
+            smpl_pose = cur_res['pred_pose'].squeeze(0)
+            smpl_pose = batch_rot2aa(torch.tensor(smpl_pose)).reshape(1, -1)[0].detach().cpu().numpy()
+            vibe_estimates['verts'].append(cur_res['smpl_vertices'].squeeze(0))
+            vibe_estimates['joints3d'].append(cur_res['smpl_joints3d'].squeeze(0))
+            vibe_estimates['joints2d_img_coord'].append(cur_res['smpl_joints2d'].squeeze(0))
+            vibe_estimates['pose'].append(smpl_pose)
+            vibe_estimates['betas'].append(cur_res['pred_shape'].squeeze(0))
+
+    for k, v in vibe_estimates.items():
+        vibe_estimates[k] = np.array(v).astype(np.float32)
+
+    vibe_results = {}
+    vibe_results[1] = vibe_estimates
+
+    joblib.dump(vibe_results, dump_path)
+    print(f'dumped PARE results to pkl at {dump_path}')
+
 
 def read_smpl(opt, scene=None):
     if opt.smpl_estimator == 'vibe':
@@ -72,6 +145,11 @@ def read_smpl(opt, scene=None):
         assert os.path.isdir(opt.raw_smpl)
         dump_path = os.path.abspath(os.path.join(opt.raw_smpl, '../smpl_output_romp.pkl'))
         dump_romp_estimates(opt.raw_smpl, dump_path, scene)
+        return read_vibe_estimates(dump_path)
+    elif opt.smpl_estimator == 'pare':
+        assert os.path.isdir(opt.raw_smpl)
+        dump_path = os.path.abspath(os.path.join(opt.raw_smpl, '../smpl_output_pare.pkl'))
+        dump_pare_estimates(opt.raw_smpl, dump_path, scene)
         return read_vibe_estimates(dump_path)
 
 
@@ -148,6 +226,8 @@ def main(opt):
         order='video'
     )
     raw_smpl = read_smpl(opt, scene)
+    # print(raw_smpl['joints2d_img_coord'])
+    # exit()
 
     assert len(raw_smpl['pose']) == len(scene.captures)
 
@@ -161,7 +241,7 @@ def main(opt):
     pcd.colors = o3d.utility.Vector3dVector(scene.point_cloud[:, 3:] / 255)
     inliers = np.abs(np.sum(np.multiply(scene.point_cloud[:, :3], plane_model[:3]), axis=1) + plane_model[3]) < 0.02
     inliers = list(np.where(inliers)[0])
-    inlier_cloud = pcd.select_by_index(inliers)
+    inlier_cloud = pcd.select_down_sample(inliers)
     inlier_cloud.paint_uniform_color([1.0, 0, 0])
 
     # solve the alignment

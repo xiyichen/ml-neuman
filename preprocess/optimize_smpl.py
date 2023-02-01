@@ -248,6 +248,11 @@ def optimize_smpl(cap, smpl, faces, body_model, align, scale, num_iters=100):
 
         silhouette = renderer(meshes_world=mesh, R=R, T=T)
         silhouette = torch.rot90(silhouette[0, ..., 3], k=2)
+        if len(silhouette.shape) != len(mask_target.shape):
+            if len(silhouette.shape) == 2:
+                silhouette = silhouette.repeat(3, 1, 1).permute(1, 2, 0)
+            if len(mask_target.shape) == 2:
+                mask_target = mask_target.repeat(3, 1, 1).permute(1, 2, 0)
         loss += torch.nn.functional.mse_loss(silhouette, mask_target)
         loss.backward()
         valid_mask = ((pose < limits[..., 1]) * (pose > limits[..., 0])).float()
@@ -263,7 +268,7 @@ def main(opt):
         tgt_size=None,
         normalize=False,
         densepose_dir='densepose',
-        smpl_type='romp'
+        smpl_type='pare'
     )
     utils.move_smpls_to_torch(scene, device)
     raw_alignments = np.load(os.path.join(opt.scene_dir, 'alignments.npy'), allow_pickle=True).item()
@@ -297,7 +302,7 @@ def main(opt):
 
 def dump_visualizations(opt):
     device = torch.device('cuda')
-    for smpl_type in ['romp', 'optimized']:
+    for smpl_type in ['pare', 'optimized']:
         scene = neuman_helper.NeuManReader.read_scene(
             opt.scene_dir,
             tgt_size=None,

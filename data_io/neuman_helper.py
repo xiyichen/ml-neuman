@@ -17,6 +17,7 @@ from cameras import captures as captures_module, contents
 from scenes import scene as scene_module
 from utils import utils, ray_utils
 from models.smpl import SMPL
+from scipy import stats
 
 
 class NeuManCapture(captures_module.RigRGBDPinholeCapture):
@@ -62,6 +63,8 @@ class NeuManCapture(captures_module.RigRGBDPinholeCapture):
             raise ValueError
         assert _mask.sum() > 0
         assert _mask.shape[0:2] == self.pinhole_cam.shape, f'mask does not match with camera model: mask shape: {_mask.shape}, pinhole camera: {self.pinhole_cam}'
+        if (len(_mask.shape) == 3):
+            _mask = _mask[:, :, 0]
         return _mask
 
     @property
@@ -77,10 +80,13 @@ class NeuManCapture(captures_module.RigRGBDPinholeCapture):
     @property
     def fused_depth_map(self):
         if self._fused_depth_map is None:
-            valid_mask = (self.depth_map > 0) & (self.mask == 0)
+            if len(self.mask.shape) == 3:
+                valid_mask = (self.depth_map > 0) & (self.mask[:, :, 0] == 0)
+            else:
+                valid_mask = (self.depth_map > 0) & (self.mask == 0)
             x = self.mono_depth_map[valid_mask]
             y = self.depth_map[valid_mask]
-            res = scipy.stats.linregress(x, y)
+            res = stats.linregress(x, y)
             self._fused_depth_map = self.depth_map.copy()
             self._fused_depth_map[~valid_mask] = self.mono_depth_map[~valid_mask] * res.slope + res.intercept
         return self._fused_depth_map
@@ -133,6 +139,8 @@ class ResizedNeuManCapture(captures_module.ResizedRigRGBDPinholeCapture):
             raise ValueError
         assert _mask.sum() > 0
         assert _mask.shape[0:2] == self.pinhole_cam.shape, f'mask does not match with camera model: mask shape: {_mask.shape}, pinhole camera: {self.pinhole_cam}'
+        if (len(_mask.shape) == 3):
+            _mask = _mask[:, :, 0]
         return _mask
 
     @property
@@ -152,7 +160,7 @@ def create_split_files(scene_dir):
     # 80% as training set
     dummy_scene = NeuManReader.read_scene(scene_dir)
     scene_length = len(dummy_scene.captures)
-    num_val = scene_length // 5
+    num_val = scene_length // 80
     length = int(1 / (num_val) * scene_length)
     offset = length // 2
     val_list = list(range(scene_length))[offset::length]
@@ -196,7 +204,7 @@ class NeuManReader():
         pass
 
     @classmethod
-    def read_scene(cls, scene_dir, tgt_size=None, normalize=False, bkg_range_scale=1.1, human_range_scale=1.1, mask_dir='segmentations', smpl_type='romp', keypoints_dir='keypoints', densepose_dir='densepose'):
+    def read_scene(cls, scene_dir, tgt_size=None, normalize=False, bkg_range_scale=1.1, human_range_scale=1.1, mask_dir='segmentations', smpl_type='pare', keypoints_dir='keypoints', densepose_dir='densepose', read_smpl=True):
         def update_near_far(scene, keys, range_scale):
             # compute the near and far
             for view_id in tqdm(range(scene.num_views), total=scene.num_views, desc=f'Computing near/far for {keys}'):
@@ -208,6 +216,10 @@ class NeuManReader():
                         cur_cap.far = {}
                     for k in keys:
                         if k == 'bkg':
+                            if len(scene.point_cloud) == 0:
+                                near = 0
+                                far = 100
+                                continue
                             pcd_2d_bkg = pcd_projector.project_point_cloud_at_capture(scene.point_cloud, cur_cap, render_type='pcd')
                             near = 0  # np.percentile(pcd_2d_bkg[:, 2], 5)
                             far = np.percentile(pcd_2d_bkg[:, 2], 95)
@@ -221,6 +233,7 @@ class NeuManReader():
                         length = (far - near) * range_scale
                         cur_cap.near[k] = max(0.0, float(center - length / 2))
                         cur_cap.far[k] = float(center + length / 2)
+
         captures, point_cloud, num_views, num_cams = cls.read_captures(scene_dir, tgt_size, mask_dir=mask_dir, keypoints_dir=keypoints_dir, densepose_dir=densepose_dir)
         scene = scene_module.RigCameraScene(captures, num_views, num_cams)
         scene.point_cloud = point_cloud
@@ -242,11 +255,13 @@ class NeuManReader():
             scale = 1
 
         scene.scale = scale
-        smpls, world_verts, static_verts, Ts = cls.read_smpls(scene_dir, scene.captures, scale=scale, smpl_type=smpl_type)
-        scene.smpls, scene.verts, scene.static_vert, scene.Ts = smpls, world_verts, static_verts, Ts
-        _, uvs, faces = utils.read_obj(
-            os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl_uv.obj')
-        )
+        if read_smpl:
+            smpl_type = 'pare'
+            smpls, world_verts, static_verts, Ts = cls.read_smpls(scene_dir, scene.captures, scale=scale, smpl_type=smpl_type)
+            scene.smpls, scene.verts, scene.static_vert, scene.Ts = smpls, world_verts, static_verts, Ts
+            _, uvs, faces = utils.read_obj(
+                os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl_uv.obj')
+            )
         scene.uvs, scene.faces = uvs, faces
         update_near_far(scene, ['human'], human_range_scale)
 
@@ -255,7 +270,7 @@ class NeuManReader():
         return scene
 
     @classmethod
-    def read_smpls(cls, scene_dir, caps, scale=1, smpl_type='romp'):
+    def read_smpls(cls, scene_dir, caps, scale=1, smpl_type='pare'):
         def extract_smpl_at_frame(raw_smpl, frame_id):
             out = {}
             for k, v in raw_smpl.items():
@@ -264,6 +279,7 @@ class NeuManReader():
                 except:
                     out[k] = None
             return out
+
 
         device = torch.device('cpu')
         body_model = SMPL(
@@ -277,13 +293,13 @@ class NeuManReader():
         Ts = []
         smpl_path = os.path.join(scene_dir, f'smpl_output_{smpl_type}.pkl')
         assert os.path.isfile(smpl_path), f'{smpl_path} is missing'
-        print(f'using {smpl_type} smpl')
         raw_smpl = joblib.load(smpl_path)
         assert len(raw_smpl) == 1
         raw_smpl = raw_smpl[list(raw_smpl.keys())[0]]
         raw_alignments = np.load(os.path.join(scene_dir, 'alignments.npy'), allow_pickle=True).item()
-        for cap in caps:
-            frame_id = int(os.path.basename(cap.image_path)[:-4])
+        for idx, cap in enumerate(caps):
+            # frame_id = os.path.basename(cap.image_path)[:-4]
+            frame_id = idx
             # assert 0 <= frame_id < len(caps)
             temp_smpl = extract_smpl_at_frame(raw_smpl, frame_id)
             temp_alignment = np.eye(4)
@@ -351,15 +367,21 @@ class NeuManReader():
                     depth_path = raw_cap.image_path + 'dummy'
                     print(f'can not find mvs depth for {os.path.basename(raw_cap.image_path)}')
                 if not os.path.isfile(mono_depth_path):
-                    mono_depth_path = raw_cap.image_path + 'dummy'
-                    print(f'can not find mono depth for {os.path.basename(raw_cap.image_path)}')
+                    mono_depth_path = mono_depth_path[:-4] + '.png'
+                    if not os.path.isfile(mono_depth_path):
+                        mono_depth_path = raw_cap.image_path + 'dummy'
+                        print(f'can not find mono depth for {os.path.basename(raw_cap.image_path)}')
                 mask_path = os.path.join(scene_dir, mask_dir, os.path.basename(raw_cap.image_path) + '.npy')
                 if not os.path.isfile(mask_path):
                     mask_path = os.path.join(scene_dir, mask_dir, os.path.basename(raw_cap.image_path))
+                    if not os.path.isfile(mask_path):
+                        mask_path = os.path.join(scene_dir, mask_dir, os.path.basename(raw_cap.image_path))[:-4] + '.png'
                 keypoints_path = os.path.join(scene_dir, keypoints_dir, os.path.basename(raw_cap.image_path) + '.npy')
                 if not os.path.isfile(keypoints_path):
-                    print(f'can not find keypoints for {os.path.basename(raw_cap.image_path)}')
-                    keypoints_path = None
+                    keypoints_path = os.path.join(scene_dir, keypoints_dir, os.path.basename(raw_cap.image_path)[:-4] + '.png.npy')
+                    if not os.path.isfile(keypoints_path):
+                        print(f'can not find keypoints for {os.path.basename(raw_cap.image_path)}')
+                        keypoints_path = None
                 densepose_path = os.path.join(scene_dir, densepose_dir, 'dp_' + os.path.basename(raw_cap.image_path) + '.npy')
                 if not os.path.isfile(densepose_path):
                     print(f'can not find densepose for {os.path.basename(raw_cap.image_path)}')

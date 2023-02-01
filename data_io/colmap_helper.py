@@ -37,6 +37,8 @@ class ColmapAsciiReader():
     def read_point_cloud(points_txt_path):
         with open(points_txt_path, "r") as fid:
             line = fid.readline()
+            if line == '':
+                return np.array([])
             assert line == '# 3D point list with one line of data per point:\n'
             line = fid.readline()
             assert line == '#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n'

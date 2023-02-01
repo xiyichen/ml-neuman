@@ -263,12 +263,13 @@ class HumanNeRFTrainer():
         # warp points from observation space to canonical space
         mesh, raw_Ts = self.net.vertex_forward(int(batch['cap_id']))
         human_pts = human_pts.reshape(-1, 3)
-        Ts, _, _ = ray_utils.warp_samples_to_canonical_diff(
-            human_pts.detach().cpu().numpy(),
-            verts=mesh[0],
-            faces=self.val_dataset.scene.captures[batch['cap_id']].posed_mesh_cpu.faces_packed().numpy(),
-            T=raw_Ts[0]
-        )
+        # Ts, _, _ = ray_utils.warp_samples_to_canonical_diff(
+        #     human_pts.detach().cpu().numpy(),
+        #     verts=mesh[0],
+        #     faces=self.val_dataset.scene.captures[batch['cap_id']].posed_mesh_cpu.faces_packed().numpy(),
+        #     T=raw_Ts[0]
+        # )
+        Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
         can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0].reshape(human_b, human_n, 3)
         can_pts += offset
         can_dirs = can_pts[:, 1:] - can_pts[:, :-1]
@@ -426,11 +427,11 @@ class HumanNeRFTrainer():
             fine_bkg_dirs[:, 0, :],
             white_bkg=self.opt.white_bkg
         )
-        loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + F.mse_loss(fine_rgb_map[hit_index.to(device)], batch['color'][hit_index].to(device))
+        loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + F.mse_loss(fine_rgb_map[hit_index.to(device)], batch['color'][hit_index].to(device)[:,:3])
 
         # LPIPS loss
         if self.penalize_lpips > 0 and batch['patch_counter'] == 1:
-            temp_lpips_loss = self.lpips_loss_fn(fine_rgb_map[:PATCH_SIZE_SQUARED].reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1, batch['color'][:PATCH_SIZE_SQUARED].to(device).reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1) * self.penalize_lpips
+            temp_lpips_loss = self.lpips_loss_fn(fine_rgb_map[:PATCH_SIZE_SQUARED].reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1, batch['color'][:PATCH_SIZE_SQUARED].to(device)[:,:3].reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1) * self.penalize_lpips
             assert torch.numel(temp_lpips_loss) == 1
             loss_dict['lpips_loss'] = loss_dict['lpips_loss'] + temp_lpips_loss.flatten()[0]
 

@@ -62,7 +62,7 @@ class NeRFTrainer(base_trainer.BaseTrainer):
 
         out = self.coarse_net(pts, dirs)
         rgb_map, _, _, weights, _ = render_utils.raw2outputs(out, z_vals, dirs[:, 0, :], raw_noise_std=self.opt.raw_noise_std, white_bkg=self.opt.white_bkg)
-        coarse_rgb_loss = F.mse_loss(rgb_map, batch['color'].to(device))
+        coarse_rgb_loss = F.mse_loss(rgb_map, batch['color'].to(device)[:,:3])
         coarse_empty_space_loss = torch.zeros_like(coarse_rgb_loss)
         if self.penalize_empty_space > 0:
             depth = batch['depth'][:, None].repeat(1, _n).to(device)
@@ -78,7 +78,7 @@ class NeRFTrainer(base_trainer.BaseTrainer):
                 F_dirs
             )
             F_rgb_map, _, _, F_weights, _ = render_utils.raw2outputs(F_out, F_z_vals, F_dirs[:, 0, :], raw_noise_std=self.opt.raw_noise_std, white_bkg=self.opt.white_bkg)
-            fine_rgb_loss = F.mse_loss(F_rgb_map, batch['color'].to(device))
+            fine_rgb_loss = F.mse_loss(F_rgb_map, batch['color'].to(device)[:,:3])
             fine_empty_space_loss = torch.zeros_like(fine_rgb_loss)
             if self.penalize_empty_space > 0:
                 F_depth = batch['depth'][:, None].repeat(1, F_z_vals.shape[1]).to(device)
