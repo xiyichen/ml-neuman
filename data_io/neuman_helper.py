@@ -218,15 +218,19 @@ class NeuManReader():
                         if k == 'bkg':
                             if len(scene.point_cloud) == 0:
                                 near = 0
-                                far = 100
-                                continue
-                            pcd_2d_bkg = pcd_projector.project_point_cloud_at_capture(scene.point_cloud, cur_cap, render_type='pcd')
-                            near = 0  # np.percentile(pcd_2d_bkg[:, 2], 5)
-                            far = np.percentile(pcd_2d_bkg[:, 2], 95)
+                                far = 20
+                            else:
+                                pcd_2d_bkg = pcd_projector.project_point_cloud_at_capture(scene.point_cloud, cur_cap, render_type='pcd')
+                                near = 0  # np.percentile(pcd_2d_bkg[:, 2], 5)
+                                far = np.percentile(pcd_2d_bkg[:, 2], 95)
                         elif k == 'human':
-                            pcd_2d_human = pcd_projector.project_point_cloud_at_capture(scene.verts[view_id], cur_cap, render_type='pcd')
-                            near = pcd_2d_human[:, 2].min()
-                            far = pcd_2d_human[:, 2].max()
+                            if len(scene.point_cloud) == 0 or not read_smpl:
+                                near = 0
+                                far = 20
+                            else:
+                                pcd_2d_human = pcd_projector.project_point_cloud_at_capture(scene.verts[view_id], cur_cap, render_type='pcd')
+                                near = pcd_2d_human[:, 2].min()
+                                far = pcd_2d_human[:, 2].max()
                         else:
                             raise ValueError(k)
                         center = (near + far) / 2
@@ -250,7 +254,8 @@ class NeuManReader():
                 cap.near['bkg'], cap.far['bkg'] = cap.near['bkg'] * scale, cap.far['bkg'] * scale
                 cap.captured_depth.scale = scale
                 cap.captured_mono_depth.scale = scale
-            scene.point_cloud[:, :3] *= scale
+            if len(scene.point_cloud) > 0:
+                scene.point_cloud[:, :3] *= scale
         else:
             scale = 1
 
@@ -262,7 +267,7 @@ class NeuManReader():
             _, uvs, faces = utils.read_obj(
                 os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl_uv.obj')
             )
-        scene.uvs, scene.faces = uvs, faces
+            scene.uvs, scene.faces = uvs, faces
         update_near_far(scene, ['human'], human_range_scale)
 
         assert len(scene.captures) > 0

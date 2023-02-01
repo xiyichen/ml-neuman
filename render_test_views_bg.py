@@ -49,7 +49,7 @@ def optimize_pose_with_nerf(opt, cap, net, iters=1000, save_every=10):
 
 def main(opt):
     # train_split, val_split, test_split = neuman_helper.create_split_files(opt.scene_dir)
-    test_views = neuman_helper.read_text(test_split)
+    test_views = neuman_helper.read_text('/cluster/scratch/xiychen/iphone-spaceout/test_view/test_split.txt')
     # val_views = neuman_helper.read_text(val_split)
     # train_views = neuman_helper.read_text(train_split)
     # test_views = val_views + test_views
@@ -62,11 +62,11 @@ def main(opt):
         smpl_type='optimized',
         read_smpl=False
     )
-    if opt.geo_threshold < 0:
-        bones = []
-        for i in range(len(scene.captures)):
-            bones.append(np.linalg.norm(scene.smpls[i]['joints_3d'][3] - scene.smpls[i]['joints_3d'][0]))
-        opt.geo_threshold = np.mean(bones)
+    # if opt.geo_threshold < 0:
+    #     bones = []
+    #     for i in range(len(scene.captures)):
+    #         bones.append(np.linalg.norm(scene.smpls[i]['joints_3d'][3] - scene.smpls[i]['joints_3d'][0]))
+    #     opt.geo_threshold = np.mean(bones)
     net = human_nerf.HumanNeRF(opt)
     weights = torch.load(opt.weights_path, map_location='cpu')
     utils.safe_load_weights(net, weights['hybrid_model_state_dict'])
