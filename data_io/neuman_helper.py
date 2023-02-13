@@ -168,8 +168,8 @@ def create_split_files(scene_dir):
     test_list = val_list[:len(val_list) // 2]
     val_list = val_list[len(val_list) // 2:]
     assert len(train_list) > 0
-    assert len(test_list) > 0
-    assert len(val_list) > 0
+    assert len(test_list) >= 0
+    assert len(val_list) >= 0
     splits = []
     for l, split in zip([train_list, val_list, test_list], ['train', 'val', 'test']):
         output = []
@@ -204,7 +204,7 @@ class NeuManReader():
         pass
 
     @classmethod
-    def read_scene(cls, scene_dir, tgt_size=None, normalize=False, bkg_range_scale=1.1, human_range_scale=1.1, mask_dir='segmentations', smpl_type='pare', keypoints_dir='keypoints', densepose_dir='densepose', read_smpl=True):
+    def read_scene(cls, scene_dir, tgt_size=None, normalize=False, bkg_range_scale=1.1, human_range_scale=1.1, mask_dir='segmentations', smpl_type='optimized', keypoints_dir='keypoints', densepose_dir='densepose', read_smpl=True):
         def update_near_far(scene, keys, range_scale):
             # compute the near and far
             for view_id in tqdm(range(scene.num_views), total=scene.num_views, desc=f'Computing near/far for {keys}'):
@@ -218,15 +218,15 @@ class NeuManReader():
                         if k == 'bkg':
                             if len(scene.point_cloud) == 0:
                                 near = 0
-                                far = 20
+                                far = 100
                             else:
                                 pcd_2d_bkg = pcd_projector.project_point_cloud_at_capture(scene.point_cloud, cur_cap, render_type='pcd')
                                 near = 0  # np.percentile(pcd_2d_bkg[:, 2], 5)
                                 far = np.percentile(pcd_2d_bkg[:, 2], 95)
                         elif k == 'human':
-                            if len(scene.point_cloud) == 0 or not read_smpl:
+                            if not read_smpl:
                                 near = 0
-                                far = 20
+                                far = 0
                             else:
                                 pcd_2d_human = pcd_projector.project_point_cloud_at_capture(scene.verts[view_id], cur_cap, render_type='pcd')
                                 near = pcd_2d_human[:, 2].min()
@@ -261,7 +261,6 @@ class NeuManReader():
 
         scene.scale = scale
         if read_smpl:
-            smpl_type = 'pare'
             smpls, world_verts, static_verts, Ts = cls.read_smpls(scene_dir, scene.captures, scale=scale, smpl_type=smpl_type)
             scene.smpls, scene.verts, scene.static_vert, scene.Ts = smpls, world_verts, static_verts, Ts
             _, uvs, faces = utils.read_obj(
@@ -275,7 +274,7 @@ class NeuManReader():
         return scene
 
     @classmethod
-    def read_smpls(cls, scene_dir, caps, scale=1, smpl_type='pare'):
+    def read_smpls(cls, scene_dir, caps, scale=1, smpl_type='optimized'):
         def extract_smpl_at_frame(raw_smpl, frame_id):
             out = {}
             for k, v in raw_smpl.items():

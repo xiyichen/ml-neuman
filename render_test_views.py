@@ -47,8 +47,10 @@ def optimize_pose_with_nerf(opt, cap, net, iters=1000, save_every=10):
 
 
 def main(opt):
-    _, _, test_split = neuman_helper.create_split_files(opt.scene_dir)
-    test_views = neuman_helper.read_text(test_split)
+    # _, _, test_split = neuman_helper.create_split_files(opt.scene_dir)
+    # test_views = neuman_helper.read_text(test_split)
+    # test_views = neuman_helper.read_text('/cluster/scratch/xiychen/iphone-spaceout/test_cam_1/test_split.txt')
+    test_views = neuman_helper.read_text(os.path.join(opt.scene_dir, 'test_split.txt'))
     scene = neuman_helper.NeuManReader.read_scene(
         opt.scene_dir,
         tgt_size=opt.render_size,

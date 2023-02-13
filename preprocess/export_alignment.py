@@ -70,6 +70,7 @@ def batch_rot2aa(Rs):
 
 
 def read_vibe_estimates(vibe_output_path):
+    print(vibe_output_path)
     vibe_estimates = joblib.load(vibe_output_path)[1]
     return vibe_estimates
 

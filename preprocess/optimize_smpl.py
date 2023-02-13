@@ -268,7 +268,7 @@ def main(opt):
         tgt_size=None,
         normalize=False,
         densepose_dir='densepose',
-        smpl_type='pare'
+        smpl_type=opt.smpl_estimator
     )
     utils.move_smpls_to_torch(scene, device)
     raw_alignments = np.load(os.path.join(opt.scene_dir, 'alignments.npy'), allow_pickle=True).item()
@@ -302,7 +302,7 @@ def main(opt):
 
 def dump_visualizations(opt):
     device = torch.device('cuda')
-    for smpl_type in ['pare', 'optimized']:
+    for smpl_type in [opt.smpl_estimator, 'optimized']:
         scene = neuman_helper.NeuManReader.read_scene(
             opt.scene_dir,
             tgt_size=None,
@@ -328,6 +328,7 @@ def dump_visualizations(opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--scene_dir', type=str, default=None, required=True)
+    parser.add_argument('--smpl_estimator', type=str, default=None, required=True)
     opt = parser.parse_args()
     main(opt)
     with torch.no_grad():
