@@ -25,6 +25,7 @@ from cameras import camera_pose
 from geometry.basics import Translation, Rotation
 from geometry import transformations
 import joblib
+from scipy.spatial.transform import Rotation as Rot
 
 def batch_rot2aa(Rs):
     """
@@ -68,6 +69,9 @@ def batch_rot2aa(Rs):
 
     return theta.unsqueeze(1) * torch.stack([axis0, axis1, axis2], 1)
 
+def world2cam(world_coord, R, t):
+    cam_coord = np.dot(R, world_coord.transpose(1, 0)).transpose(1, 0) + t.reshape(1, 3)
+    return cam_coord
 
 def read_vibe_estimates(vibe_output_path):
     print(vibe_output_path)
@@ -210,11 +214,18 @@ def solve_transformation(verts, j3d, j2d, plane_model, colmap_cap, smpl_cap):
     mvp = np.matmul(smpl_cap.intrinsic_matrix, smpl_cap.extrinsic_matrix)
     trans = solve_translation(j3d, j2d, mvp)
     smpl_cap.cam_pose.camera_center_in_world -= trans[0]
+    
+    # print(trans)
+    R_p = colmap_cap.cam_pose.camera_to_world[:3,:3] @ smpl_cap.cam_pose.world_to_camera[:3,:3]
+    # r = R.from_matrix(R_p)
+    # print(r.as_rotvec())
+    # exit()
     joints_world = (ray_utils.to_homogeneous(j3d) @ smpl_cap.cam_pose.world_to_camera.T @ colmap_cap.cam_pose.camera_to_world.T)[:, :3]
     scale = solve_scale(joints_world, colmap_cap, plane_model)
     print('scale', scale)
     transf = smpl_cap.cam_pose.world_to_camera.T * scale
     transf[3, 3] = 1
+    # exit()
     transf = transf @ colmap_cap.cam_pose.camera_to_world_3x4.T
     verts_world = ray_utils.to_homogeneous(verts) @ transf
     return transf, verts_world
@@ -248,12 +259,16 @@ def main(opt):
     # solve the alignment
     alignments = {}
     for i, cap in tqdm(enumerate(scene.captures), total=len(scene.captures)):
+        # print(cap.image_path)
+        # exit()
         pts_3d = raw_smpl['joints3d'][i]
         pts_2d = raw_smpl['joints2d_img_coord'][i]
         _, R_rod, t, inl = cv2.solvePnPRansac(pts_3d, pts_2d, cap.pinhole_cam.intrinsic_matrix, np.zeros(4), flags=cv2.SOLVEPNP_EPNP)
         t = t.astype(np.float32)[:, 0]
         R, _ = cv2.Rodrigues(R_rod)
         quat = transformations.quaternion_from_matrix(R).astype(np.float32)
+        # print(R_rod, t)
+        # exit()
 
         smpl_cap = copy.deepcopy(cap)
         smpl_cam_pose = camera_pose.CameraPose(Translation(t), Rotation(quat))
@@ -268,7 +283,38 @@ def main(opt):
             cap,
             smpl_cap
         )
+
+        # print(transf.T)
+        # exit()
+        
+        R = Rot.from_matrix(transf[:3, :3]).as_rotvec().reshape(1, 3)
+        T = transf[3, :].reshape(1, 3)
+
+        # R = transf[:3, :3]
+        # T = transf[3, :].reshape(1, 3)
+
+        print(R, T)
+        exit()
+        # verts_world = raw_smpl['verts'][i] @ R + T
+        # K = cap.pinhole_cam.intrinsic_matrix
+        # R = cap.cam_pose.extrinsic_matrix[:3, :3]
+        # t = cap.cam_pose.extrinsic_matrix[:, 3].reshape(1, 3)
+        # smpl_output_init_cam = world2cam(verts_world, R, t)
+        # proj_points_v = smpl_output_init_cam / smpl_output_init_cam[:, -1:]
+        # proj_points_v = np.einsum('ij, kj->ki', np.array(K), proj_points_v)
+        # from PIL import Image
+        # img = cv2.imread(cap.image_path)
+        # for idx, loc in enumerate(proj_points_v):
+        #     c_x = int(loc[0])
+        #     c_y = int(loc[1])
+        #     cv2.circle(img, (c_x, c_y), 1, (255, 0, 0), -1)
+        # Image.fromarray(img[:,:,::-1]).save('/cluster/scratch/xiychen/arah-release/debug/iphone/' + cap.image_path.split('/')[-2] + '_' + cap.image_path.split('/')[-1])
+        # print(proj_points_v)
+        # exit()
+
+
         alignments[os.path.basename(cap.image_path)] = transf
+        exit()
     save_path = os.path.abspath(os.path.join(opt.scene_dir, '../alignments.npy'))
     np.save(save_path, alignments)
     print(f'alignment matrix saved at: {save_path}')
